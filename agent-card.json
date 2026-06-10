@@ -19,18 +19,18 @@
     "inputs": [
       {
         "id": "fits_file",
-        "description": "The raw astronomical FITS spectrum file to process.",
+        "description": "The raw astronomical FITS spectrum file to process. Supports multi-segment HST COS/STIS tables, JWST binary tables, SDSS files, or 1D IRAF image arrays.",
         "contentType": "application/octet-stream",
         "required": true
       },
       {
         "id": "parameters",
-        "description": "Configuration parameters for continuum fitting and noise reduction.",
+        "description": "Configuration parameters for the continuum baseline fitting loop and masking.",
         "contentType": "application/json",
         "required": true,
         "example": {
           "polynomial_order": 5,
-          "mask_regions": ""
+          "mask_regions": "1200-1230,6500-6600"
         },
         "schema": {
           "type": "object",
@@ -40,13 +40,13 @@
               "type": "integer",
               "title": "Polynomial Order",
               "default": 5,
-              "description": "Degree of the polynomial to use for fitting the baseline."
+              "description": "Degree of the polynomial to use for fitting the baseline continuum."
             },
             "mask_regions": {
               "type": "string",
               "title": "Manual Mask Regions",
               "default": "",
-              "description": "Comma-separated wavelength ranges to manually mask out (e.g., '6500-6600,4800-4900')."
+              "description": "Comma-separated wavelength ranges to manually mask out and exclude from continuum fitting (e.g., '1200-1230,6500-6600')."
             }
           }
         }
@@ -55,19 +55,117 @@
     "outputs": [
       {
         "id": "result",
-        "description": "The parsed spectral arrays, fitted continuum, and matched spectral lines.",
+        "description": "The parsed spectral arrays, continuum fit, normalized flux, detected lines, and physical analysis report.",
         "contentType": "application/json",
-        "guaranteed": true
+        "guaranteed": true,
+        "example": {
+          "wavelength": [1210.5, 1215.6, 1220.7],
+          "flux": [1.2e-13, 8.5e-13, 1.3e-13],
+          "continuum": [1.25e-13, 1.27e-13, 1.29e-13],
+          "normalized_flux": [0.96, 6.69, 1.01],
+          "units_wavelength": "angstrom",
+          "units_flux": "erg /s /cm**2 /angstrom",
+          "detected_lines": [
+            {
+              "wavelength": 1215.67,
+              "type": "emission",
+              "significance": 15.4
+            }
+          ],
+          "ai_analysis": {
+            "object_classification": "Quasar",
+            "estimated_redshift": 0.0023,
+            "radial_velocity_km_s": 690.0,
+            "elements_detected": [
+              {
+                "element_name": "Hydrogen Lyman-alpha",
+                "rest_wavelength": 1215.67,
+                "observed_wavelength": 1218.46,
+                "confidence": 0.95
+              }
+            ],
+            "summary": "The target spectrum shows a strong Lyman-alpha emission line, indicating a high-temperature ionized gas region."
+          }
+        },
+        "schema": {
+          "type": "object",
+          "properties": {
+            "wavelength": {
+              "type": "array",
+              "items": { "type": "number" },
+              "description": "Wavelength grid points of the processed spectrum."
+            },
+            "flux": {
+              "type": "array",
+              "items": { "type": "number" },
+              "description": "Original observed flux values."
+            },
+            "continuum": {
+              "type": "array",
+              "items": { "type": "number" },
+              "description": "Fitted continuum baseline flux values."
+            },
+            "normalized_flux": {
+              "type": "array",
+              "items": { "type": "number" },
+              "description": "Normalized flux values (flux divided by continuum)."
+            },
+            "units_wavelength": {
+              "type": "string",
+              "description": "Wavelength measurement units extracted from the FITS headers."
+            },
+            "units_flux": {
+              "type": "string",
+              "description": "Flux density units extracted from the FITS headers."
+            },
+            "detected_lines": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "wavelength": { "type": "number" },
+                  "type": { "type": "string", "enum": ["emission", "absorption"] },
+                  "significance": { "type": "number" }
+                }
+              },
+              "description": "Centroids and properties of numerically detected lines."
+            },
+            "ai_analysis": {
+              "type": "object",
+              "properties": {
+                "object_classification": { "type": "string" },
+                "estimated_redshift": { "type": "number" },
+                "radial_velocity_km_s": { "type": "number" },
+                "elements_detected": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "element_name": { "type": "string" },
+                      "rest_wavelength": { "type": "number" },
+                      "observed_wavelength": { "type": "number" },
+                      "confidence": { "type": "number" }
+                    }
+                  }
+                },
+                "summary": { "type": "string" }
+              },
+              "description": "Astrophysical classification and element mapping report from the AI."
+            }
+          }
+        }
       }
     ]
   },
   "tags": [
     {
       "id": "main",
-      "name": "Spectral Analysis",
-      "description": "Handles automated FITS loading and continuum normalization.",
+      "name": "Astro-Spectra Analysis",
+      "description": "Processes raw 1D FITS files to perform automated wavelength calibration, baseline continuum polynomial fitting, line centroid extraction, and astrophysical profiling.",
       "examples": [
-        "Automatically fit the continuum and identify line doublets from this MAST FITS file."
+        "Extract and normalize the spectrum of the white dwarf GD71 from a MAST FITS binary table.",
+        "Fit the continuum using a 5th-order polynomial and identify emission line peaks above 3.0-sigma significance.",
+        "Estimate the cosmological redshift and radial velocity of a quasar by matching observed spectral line centroids to rest-frame transitions."
       ]
     }
   ],
