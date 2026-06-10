@@ -2,7 +2,7 @@
   "identity": {
     "agentName": "astro_spectra",
     "displayName": "Astro-Spectra",
-    "description": "An intelligent AI agent that automatically parses, denoises, and estimates redshift for astronomical spectra.",
+    "description": "An advanced hybrid numerical-AI agent that parses astronomical 1D FITS spectra, fits a baseline continuum, detects spectral lines, and performs physical analysis (redshift estimation, radial velocity calculation, and element mapping).",
     "version": "1.0.0",
     "provider": {
       "organization": "Astro_Research"
