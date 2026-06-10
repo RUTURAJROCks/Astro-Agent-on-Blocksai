@@ -1,0 +1,81 @@
+{
+  "identity": {
+    "agentName": "astro_spectra",
+    "displayName": "Astro-Spectra",
+    "description": "An intelligent AI agent that automatically parses, denoises, and estimates redshift for astronomical spectra.",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "Astro_Research"
+    },
+    "documentationUrl": "https://github.com/RUTURAJROCks/Astro-Agent-on-Blocksai",
+    "repositoryUrl": "https://github.com/RUTURAJROCks/Astro-Agent-on-Blocksai"
+  },
+  "capabilities": {
+    "taskKinds": [
+      "request"
+    ]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "fits_file",
+        "description": "The raw astronomical FITS spectrum file to process.",
+        "contentType": "application/octet-stream",
+        "required": true
+      },
+      {
+        "id": "parameters",
+        "description": "Configuration parameters for continuum fitting and noise reduction.",
+        "contentType": "application/json",
+        "required": true,
+        "example": {
+          "polynomial_order": 5,
+          "mask_regions": ""
+        },
+        "schema": {
+          "type": "object",
+          "required": [],
+          "properties": {
+            "polynomial_order": {
+              "type": "integer",
+              "title": "Polynomial Order",
+              "default": 5,
+              "description": "Degree of the polynomial to use for fitting the baseline."
+            },
+            "mask_regions": {
+              "type": "string",
+              "title": "Manual Mask Regions",
+              "default": "",
+              "description": "Comma-separated wavelength ranges to manually mask out (e.g., '6500-6600,4800-4900')."
+            }
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "result",
+        "description": "The parsed spectral arrays, fitted continuum, and matched spectral lines.",
+        "contentType": "application/json",
+        "guaranteed": true
+      }
+    ]
+  },
+  "tags": [
+    {
+      "id": "main",
+      "name": "Spectral Analysis",
+      "description": "Handles automated FITS loading and continuum normalization.",
+      "examples": [
+        "Automatically fit the continuum and identify line doublets from this MAST FITS file."
+      ]
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.py",
+    "handlerExport": "handler",
+    "concurrency": 1,
+    "expectedInstances": 1,
+    "maxRunningTimeSec": 120
+  }
+}
