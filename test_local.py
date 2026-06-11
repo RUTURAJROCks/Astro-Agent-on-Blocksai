@@ -55,7 +55,7 @@ def main():
     markdown_report = response["artifacts"][1]["data"]
     
     print("\n==============================================")
-    print("✅ LOCAL INTEGRATION TEST COMPLETE")
+    print("LOCAL INTEGRATION TEST COMPLETE")
     print("==============================================")
     print(f"Wavelength Units : {result.get('units_wavelength')}")
     print(f"Flux Units       : {result.get('units_flux')}")
@@ -64,7 +64,7 @@ def main():
     print("==============================================\n")
     
     print("==============================================")
-    print("📄 RENDERED MARKDOWN REPORT ARTIFACT")
+    print("RENDERED MARKDOWN REPORT ARTIFACT")
     print("==============================================")
     print(markdown_report)
     print("==============================================\n")

@@ -6,3 +6,8 @@ __pycache__/
 *.pyc
 astro_spectra_project_summary.pdf
 generate_pdf.py
+.astro_cache.json
+gd71_x1d.fits
+get_task_error.py
+view_fits.py
+cropped_architecture.png

@@ -7,6 +7,8 @@ from __future__ import annotations
 import os
 import json
 import numpy as np
+import hashlib
+import time
 from typing import Optional
 from astropy.io import fits
 from dotenv import load_dotenv
@@ -14,6 +16,50 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from blocks_network import StartTaskMessage, TaskContext
+
+CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".astro_cache.json")
+COOLDOWN_PERIOD = 300  # 5 minutes in seconds
+
+def load_cache() -> dict:
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_cache(cache_data: dict):
+    try:
+        if len(cache_data) > 100:
+            keys_to_remove = [k for k in cache_data.keys() if not k.startswith("_")]
+            for k in keys_to_remove[:20]:
+                cache_data.pop(k, None)
+        with open(CACHE_FILE, "w") as f:
+            json.dump(cache_data, f, indent=2)
+    except Exception:
+        pass
+
+def get_cache_key(fits_bytes: bytes, poly_order: int, mask_str: str) -> str:
+    h = hashlib.sha256(fits_bytes).hexdigest()
+    return f"{h}:{poly_order}:{mask_str}"
+
+def get_circuit_breakers() -> dict:
+    cache = load_cache()
+    return cache.get("_circuit_breakers", {})
+
+def record_model_failure(model_name: str):
+    cache = load_cache()
+    if "_circuit_breakers" not in cache:
+        cache["_circuit_breakers"] = {}
+    cache["_circuit_breakers"][model_name] = time.time()
+    save_cache(cache)
+
+def record_model_success(model_name: str):
+    cache = load_cache()
+    if "_circuit_breakers" in cache and model_name in cache["_circuit_breakers"]:
+        cache["_circuit_breakers"].pop(model_name, None)
+        save_cache(cache)
 
 
 def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> dict:
@@ -32,7 +78,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> dict:
         Result with "artifacts" key containing a list of {data, mimeType} entries.
     """
     if ctx is not None:
-        ctx.report_status("Starting spectral analysis...")
+        ctx.report_status("Starting spectral analysis... (10%)")
 
     # 1. Extract inputs from request parts
     fits_bytes = None
@@ -64,6 +110,11 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> dict:
     if fits_bytes is None:
         raise ValueError('Missing required file part "fits_file"')
 
+    # Input size limit check: 50MB
+    max_size_bytes = 50 * 1024 * 1024
+    if len(fits_bytes) > max_size_bytes:
+        raise ValueError(f"FITS file size too large: {len(fits_bytes) / 1024 / 1024:.1f} MB (maximum allowed is 50 MB)")
+
     # Parse parameters
     polynomial_order = 5
     mask_regions_str = ""
@@ -90,7 +141,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> dict:
     # 3. Adaptive Auto-Parser
     try:
         if ctx is not None:
-            ctx.report_status("Parsing FITS headers and columns...")
+            ctx.report_status("Parsing FITS headers and columns... (30%)")
 
         with fits.open(temp_filename) as hdul:
             # Extract observation metadata from primary header if available
@@ -184,7 +235,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> dict:
 
     # 4. Continuum Reflection Loop
     if ctx is not None:
-        ctx.report_status("Executing Continuum Reflection Loop...")
+        ctx.report_status("Executing Continuum Reflection Loop... (50%)")
 
     x = np.array(wavelength)
     y = np.array(flux)
@@ -276,108 +327,122 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> dict:
     if openrouter_api_key:
         try:
             if ctx is not None:
-                ctx.report_status("Performing AI spectral classification and element mapping via OpenRouter...")
+                ctx.report_status("Performing AI spectral classification and element mapping... (70%)")
 
-            from openai import OpenAI
-            client = OpenAI(
-                api_key=openrouter_api_key,
-                base_url="https://openrouter.ai/api/v1",
-            )
+            # Check cache
+            cache_key = get_cache_key(fits_bytes, polynomial_order, mask_regions_str)
+            cache_data = load_cache()
+            if cache_key in cache_data:
+                if ctx is not None:
+                    ctx.report_status("Found cached AI analysis result! (85%)")
+                ai_report = cache_data[cache_key]
+                used_model = "Cached Response"
+            else:
+                from openai import OpenAI
+                client = OpenAI(
+                    api_key=openrouter_api_key,
+                    base_url="https://openrouter.ai/api/v1",
+                )
 
-            # Build LLM prompt
-            prompt_lines = []
-            prompt_lines.append("You are an expert astrophysicist and spectral analyst.")
-            prompt_lines.append("Analyze the following detected spectral lines and metadata to classify the astronomical object, match the lines to chemical elements, and estimate the redshift (z) and radial velocity.")
-            prompt_lines.append("")
-            prompt_lines.append("Observation Metadata:")
-            for k, v in meta.items():
-                prompt_lines.append(f"  - {k.upper()}: {v}")
-            prompt_lines.append(f"  - Wavelength Units: {units_wavelength}")
-            prompt_lines.append(f"  - Flux Units: {units_flux}")
-            prompt_lines.append("")
-            prompt_lines.append("Detected Line Peaks (Observed wavelengths):")
-            for idx, line in enumerate(detected_lines):
-                prompt_lines.append(f"  - Line {idx+1}: Wavelength={line['wavelength']:.2f}, Type={line['type']}, Significance={line['significance']:.2f} sigma")
-            prompt_lines.append("")
-            prompt_lines.append("Instructions:")
-            prompt_lines.append("1. Match the detected observed wavelengths against known rest transitions (e.g. H-alpha [6563 Å], H-beta [4861 Å], [O III] [5007 Å], He II [4686 Å], Ca H [3968 Å], Ca K [3934 Å], Lyman-alpha [1216 Å], etc.).")
-            prompt_lines.append("2. Compute the estimated redshift z = (observed_wavelength / rest_wavelength) - 1. If the target is a star in our galaxy, z should be near 0.0.")
-            prompt_lines.append("3. Return a valid JSON object matching the schema below. Do not output any thinking or markdown code blocks outside of the JSON.")
-            prompt_lines.append("")
-            prompt_lines.append("Expected JSON Schema:")
-            prompt_lines.append("{")
-            prompt_lines.append('  "object_classification": "Astronomical classification (e.g. White Dwarf, Quasar, Star, Galaxy)",')
-            prompt_lines.append('  "estimated_redshift": 0.0023,')
-            prompt_lines.append('  "radial_velocity_km_s": 690.0,')
-            prompt_lines.append('  "elements_detected": [')
-            prompt_lines.append("    {")
-            prompt_lines.append('      "element_name": "Element name (e.g. H-alpha)",')
-            prompt_lines.append('      "rest_wavelength": 6563.0,')
-            prompt_lines.append('      "observed_wavelength": 6578.0,')
-            prompt_lines.append('      "confidence": 0.95')
-            prompt_lines.append("    }")
-            prompt_lines.append("  ],")
-            prompt_lines.append('  "summary": "Narrative analysis of the spectrum."')
-            prompt_lines.append("}")
+                # Build LLM prompt
+                prompt_lines = []
+                prompt_lines.append("You are an expert astrophysicist and spectral analyst.")
+                prompt_lines.append("Analyze the following detected spectral lines and metadata to classify the astronomical object, match the lines to chemical elements, and estimate the redshift (z) and radial velocity.")
+                prompt_lines.append("")
+                prompt_lines.append("Observation Metadata:")
+                for k, v in meta.items():
+                    prompt_lines.append(f"  - {k.upper()}: {v}")
+                prompt_lines.append(f"  - Wavelength Units: {units_wavelength}")
+                prompt_lines.append(f"  - Flux Units: {units_flux}")
+                prompt_lines.append("")
+                prompt_lines.append("Detected Line Peaks (Observed wavelengths):")
+                for idx, line in enumerate(detected_lines):
+                    prompt_lines.append(f"  - Line {idx+1}: Wavelength={line['wavelength']:.2f}, Type={line['type']}, Significance={line['significance']:.2f} sigma")
+                prompt_lines.append("")
+                prompt_lines.append("Instructions:")
+                prompt_lines.append("1. Match the detected observed wavelengths against known rest transitions (e.g. H-alpha [6563 Å], H-beta [4861 Å], [O III] [5007 Å], He II [4686 Å], Ca H [3968 Å], Ca K [3934 Å], Lyman-alpha [1216 Å], etc.).")
+                prompt_lines.append("2. Compute the estimated redshift z = (observed_wavelength / rest_wavelength) - 1. If the target is a star in our galaxy, z should be near 0.0.")
+                prompt_lines.append("3. Return a valid JSON object matching the requested schema. Do not output any thinking or markdown code blocks outside of the JSON.")
+                prompt_lines.append("")
+                prompt_lines.append("Expected JSON Schema:")
+                prompt_lines.append("Return a JSON object: {\"object_classification\": str, \"estimated_redshift\": float, \"radial_velocity_km_s\": float, \"elements_detected\": [{\"element_name\": str, \"rest_wavelength\": float, \"observed_wavelength\": float, \"confidence\": float}], \"summary\": str}")
 
-            models_to_try = [
-                os.environ.get("OPENROUTER_MODEL", "openai/gpt-oss-20b:free"),
-                "google/gemma-4-31b-it:free",
-                "meta-llama/llama-3.3-70b-instruct:free"
-            ]
+                models_to_try = [
+                    os.environ.get("OPENROUTER_MODEL", "openai/gpt-oss-20b:free"),
+                    "google/gemma-4-31b-it:free",
+                    "meta-llama/llama-3.3-70b-instruct:free"
+                ]
 
-            # Remove duplicates while preserving order
-            seen = set()
-            unique_models = [m for m in models_to_try if not (m in seen or seen.add(m))]
+                # Remove duplicates while preserving order
+                seen = set()
+                unique_models = [m for m in models_to_try if not (m in seen or seen.add(m))]
 
-            response_text = None
-            last_err = None
-            prompt_content = "\n".join(prompt_lines)
+                # Load circuit breakers
+                circuit_breakers = get_circuit_breakers()
+                now = time.time()
+                active_models = []
+                for m_name in unique_models:
+                    fail_time = circuit_breakers.get(m_name, 0)
+                    if now - fail_time >= COOLDOWN_PERIOD:
+                        active_models.append(m_name)
 
-            for m_name in unique_models:
-                try:
-                    if ctx is not None:
-                        ctx.report_status(f"Trying model: {m_name}...")
-                    else:
-                        print(f"Trying model: {m_name}...")
+                # Fallback to all models if all are cooling down
+                models_to_try_now = active_models if active_models else unique_models
 
-                    response = client.chat.completions.create(
-                        model=m_name,
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": "You are a professional astrophysicist that only outputs valid JSON matching the requested schema."
-                            },
-                            {
-                                "role": "user",
-                                "content": prompt_content
-                            }
-                        ],
-                        response_format={"type": "json_object"}
-                    )
-                    response_text = response.choices[0].message.content
-                    used_model = m_name
-                    break  # Success!
-                except Exception as e:
-                    last_err = e
-                    if ctx is not None:
-                        ctx.report_status(f"Model {m_name} rate-limited/failed. Trying fallback...")
-                    else:
-                        print(f"Model {m_name} failed: {e}")
+                response_text = None
+                last_err = None
+                prompt_content = "\n".join(prompt_lines)
 
-            if not response_text:
-                raise last_err if last_err else RuntimeError("All models failed to return content.")
+                for m_name in models_to_try_now:
+                    try:
+                        if ctx is not None:
+                            ctx.report_status(f"Trying model: {m_name}... (85%)")
+                        else:
+                            print(f"Trying model: {m_name}...")
 
-            # Clean response text in case markdown tags were wrapped
-            response_text_clean = response_text.strip()
-            if response_text_clean.startswith("```json"):
-                response_text_clean = response_text_clean[7:]
-            if response_text_clean.endswith("```"):
-                response_text_clean = response_text_clean[:-3]
-            response_text_clean = response_text_clean.strip()
+                        response = client.chat.completions.create(
+                            model=m_name,
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": "You are a professional astrophysicist that only outputs valid JSON matching the requested schema."
+                                },
+                                {
+                                    "role": "user",
+                                    "content": prompt_content
+                                }
+                            ],
+                            response_format={"type": "json_object"},
+                            timeout=30.0
+                        )
+                        response_text = response.choices[0].message.content
+                        used_model = m_name
+                        record_model_success(m_name)
+                        break  # Success!
+                    except Exception as e:
+                        last_err = e
+                        record_model_failure(m_name)
+                        if ctx is not None:
+                            ctx.report_status(f"Model {m_name} rate-limited/failed. Trying fallback...")
+                        else:
+                            print(f"Model {m_name} failed: {e}")
 
-            # Parse
-            ai_report = json.loads(response_text_clean)
+                if not response_text:
+                    raise last_err if last_err else RuntimeError("All models failed to return content.")
+
+                # Clean response text in case markdown tags were wrapped
+                response_text_clean = response_text.strip()
+                if response_text_clean.startswith("```json"):
+                    response_text_clean = response_text_clean[7:]
+                if response_text_clean.endswith("```"):
+                    response_text_clean = response_text_clean[:-3]
+                response_text_clean = response_text_clean.strip()
+
+                # Parse and cache
+                ai_report = json.loads(response_text_clean)
+                cache_data = load_cache()
+                cache_data[cache_key] = ai_report
+                save_cache(cache_data)
         except Exception as e:
             print(f"Warning: OpenRouter AI analysis failed: {e}")
             if ctx is not None:
@@ -443,7 +508,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> dict:
     }
 
     if ctx is not None:
-        ctx.report_status("Spectral analysis complete!")
+        ctx.report_status("Spectral analysis complete! (100%)")
 
     # Return dual output artifacts
     return {

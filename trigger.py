@@ -58,7 +58,7 @@ def main():
         try:
             data = json.loads(data_bytes.decode())
             print("\n==============================================")
-            print("🚀 SPECTRAL ANALYSIS RESULTS (NASA MAST DATA)")
+            print("SPECTRAL ANALYSIS RESULTS (NASA MAST DATA)")
             print("==============================================")
             print(f"Wavelength Units : {data.get('units_wavelength')}")
             print(f"Flux Units       : {data.get('units_flux')}")
