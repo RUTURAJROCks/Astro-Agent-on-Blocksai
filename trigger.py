@@ -5,6 +5,9 @@ import base64
 import threading
 import urllib.request
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from blocks_network import SendMessageRequestPart, create_task_client
 
 
