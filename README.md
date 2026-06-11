@@ -107,7 +107,12 @@ You can test the agent locally using the provided `test_local.py` script. This s
 python test_local.py
 ```
 
-### 3. Deploying to Blocks.ai
+### 3. Demo and Pre-populated Cache
+A sample calibrated 1D FITS spectrum from the Hubble Space Telescope (`laad02d9q_x1d.fits`) is included in the root of the repository. You can use this file for testing or demo purposes. 
+
+Since the agent implements a file-based result cache (`.astro_cache.json`), submitting this file (with default parameters) will instantly return the cached physical analysis report and JSON output in under 1 second without querying the OpenRouter LLM API. To force a live LLM call and bypass the cache for this file, simply change the `polynomial_order` parameter to a different value (e.g., `4` or `6`) or change the `mask_regions` parameter.
+
+### 4. Deploying to Blocks.ai
 To publish the agent to the Blocks.ai network:
 1. Verify the project configuration:
    ```bash
@@ -133,3 +138,4 @@ To publish the agent to the Blocks.ai network:
 * **`test_local.py`**: Integration script to run the pipeline locally with real Mast data.
 * **`trigger.py`**: Helper script to programmatically trigger a task on the Blocks.ai network.
 * **`inspect_fits.py`**: Diagnostic script to print the headers and structure of a local FITS file.
+* **`laad02d9q_x1d.fits`**: Sample calibrated 1D Hubble Space Telescope FITS spectrum used for demos and tests.
