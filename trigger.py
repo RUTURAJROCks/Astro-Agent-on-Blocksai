@@ -40,8 +40,8 @@ def main():
         request_parts=[
             SendMessageRequestPart(
                 part_id="fits_file",
-                data=fits_bytes,
-                mime_type="application/octet-stream"
+                file=fits_bytes,
+                content_type="application/octet-stream"
             ),
             SendMessageRequestPart(
                 part_id="parameters",
