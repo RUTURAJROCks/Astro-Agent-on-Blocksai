@@ -1,3 +1,8 @@
 .env
 pip.conf
 .npmrc
+.DS_Store
+__pycache__/
+*.pyc
+astro_spectra_project_summary.pdf
+generate_pdf.py
