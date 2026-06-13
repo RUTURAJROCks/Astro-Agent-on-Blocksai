@@ -16,6 +16,7 @@ dependencies = [
     "astroquery",
     "openai",
     "httpx",
+    "python-dotenv",
 ]
 
 [tool.setuptools]
